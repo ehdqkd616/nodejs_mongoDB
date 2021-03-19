@@ -23,13 +23,17 @@ function connectDB() {
     let databaseUrl = 'mongodb://localhost:27017/local';
 
     // 데이터베이스 연결
-    MongoClient.connect(databaseUrl, function (err, db) {
+    MongoClient.connect(databaseUrl, {
+        useUnifiedTopology: true
+    }, function (err, db) {
         if (err) throw err;
 
         console.log('데이터베이스에 연결되었습니다. : ' + databaseUrl);
 
         // database 변수에 할당
-        database = db;
+        // database = db; // 구버전 방식
+
+        database = db.db('local'); // 최신 방식
     });
 }
 
@@ -59,6 +63,35 @@ let authUser = function (database, id, password, callback) {
     });
 }
 
+// 사용자를 추가하는 함수
+let addUser = function (database, id, password, name, callback) {
+    console.log(`addUser 호출됨 : ${id}, ${password}, ${name}`);
+
+    // users 컬렉션 참조
+    let users = database.collection('users');
+
+    // id, password, username을 사용해 사용자 추가
+    users.insertMany([{
+        "id": id,
+        "password": password,
+        "name": name
+    }], function (err, result) {
+        if (err) {
+            callback(err, null);
+            return;
+        }
+
+        // 오류가 아닌 경우, 콜백 함수를 호출하면서 결과 객체 전달
+        if (result.insertedCount > 0) {
+            console.log("사용자 레코드 추가됨 : " + result.insertedCount);
+        } else {
+            console.log("추가된 레코드가 없음.");
+        }
+
+        callback(null, result);
+    });
+}
+
 // 오류 핸들러 모듈 로드
 const expressErrorHandler = require('express-error-handler');
 
@@ -73,17 +106,17 @@ app.set('port', process.env.PORT || 3000);
 
 // 구방식 body-parser
 // body-parser를 사용해 application/x-www-form-urlencoded 파싱
-app.use(bodyParser.urlencoded({
-    extended: false
-}));
+// app.use(bodyParser.urlencoded({
+//     extended: false
+// }));
 
 // 최신방식 body-parser 활성화
-// webServer.use(express.json());
+app.use(express.json());
 
 // 최신방식 query parser 활성화
-// webServer.use(express.urlencoded({
-//     extended: true
-// }));
+app.use(express.urlencoded({
+    extended: true
+}));
 
 // 구방식 static 활성화
 app.use('/public', static(path.join(__dirname, 'public')));
@@ -108,8 +141,8 @@ let router = express.Router();
 router.route('/process/login').post(function (req, res) {
     console.log('/process/login 호출됨.');
 
-    let paramId = req.param('id');
-    let paramPassword = req.param('password');
+    let paramId = req.body.id;
+    let paramPassword = req.body.password;
 
     if (database) {
         authUser(database, paramId, paramPassword, function (err, docs) {
@@ -121,11 +154,70 @@ router.route('/process/login').post(function (req, res) {
                 console.dir(docs);
                 let username = docs[0].name;
                 res.writeHead('200', {
-                    'Content-Type'
+                    'Content-Type': 'text/html;charset=utf8'
                 });
+                res.write(`<h1>로그인 성공</h1>`);
+                res.write(`<div><p>사용자 아이디 : ${paramId}</p></div>`);
+                res.write(`<div><p>사용자 이름 : ${username}</p></div>`);
+                res.write(`<br><br><a href='public/login.html'>다시 로그인하기</a>`);
+                res.end();
+            } else {
+                res.writeHead('200', {
+                    'Content-Type': 'text/html;charset=utf8'
+                });
+                res.write(`<h1>로그인 실패</h1>`);
+                res.write(`<div><p>아이디와 비밀번호를 다시 확인하십시오.</p></div>`);
+                res.write(`<br><br><a href='public/login.html'>다시 로그인하기</a>`);
+                res.end();
+            }
+        });
+    } else {
+        res.writeHead('200', {
+            'Content-Type': 'text/html;charset=utf8'
+        });
+        res.write(`<h2>데이터베이스 연결 실패</h2>`);
+        res.write(`<div><p>데이터베이스에 연결하지 못했습니다.</p></div>`);
+        res.end();
+    }
+
+});
+
+// 사용자 추가 라우팅 함수 - 클라이언트에서 보내온 데이터를 이용해 데이터베이스에 추가
+router.route('/process/adduser').post(function (req, res) {
+    console.log('/process/adduser 호출됨.');
+
+    let paramId = req.body.id || req.query.id;
+    let paramPassword = req.body.password || req.query.password;
+    let paramName = req.body.name || req.query.name;
+
+    console.log(`요청 파라미터 : ${paramId}, ${paramPassword}, ${paramName}`);
+
+    // 데이터베이스 객체가 초기화된 경우, addUser 함수 호출하여 사용자 추가
+    if (database) {
+        addUser(database, paramId, paramPassword, paramName, function (err, result) {
+            if (err) {
+                throw err;
+            }
+
+            // 결과 객체 확인하여 추가된 데이터 있으면 성공 응답 전송
+            if (result && result.insertedCount > 0) {
+                console.dir(result);
+
+                res.writeHead('200', {
+                    'Content-Type': 'text/html;charset=utf8'
+                });
+                res.write(`<h2>사용자 추가 성공</h2>`);
+                res.end();
+            } else {
+                res.writeHead('200', {
+                    'Content-Type': 'text/html;charset=utf8'
+                });
+                res.write(`<h2>데이터베이스 연결 실패</h2>`);
+                res.end();
             }
         });
     }
+
 });
 
 // 라우터 객체 등록
